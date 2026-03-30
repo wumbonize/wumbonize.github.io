@@ -1,63 +1,113 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>XR Rearview Mirror</title>
+    <title>XR Rearview Mirror + Voice Clip</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; background: black; color: #00ff00; font-family: monospace; text-align: center; }
-        video { width: 100vw; height: 60vh; object-fit: cover; transform: scaleX(-1); border-bottom: 2px solid #00ff00; }
-        .controls { padding: 20px; }
-        button { padding: 15px; margin: 5px; background: #333; color: #00ff00; border: 1px solid #00ff00; border-radius: 5px; cursor: pointer; }
-        #status { font-size: 1.2em; margin-bottom: 10px; }
+        body { margin: 0; background: #000; color: #00ff00; font-family: 'Courier New', monospace; text-align: center; overflow: hidden; }
+        video { width: 100vw; height: 70vh; object-fit: cover; transform: scaleX(-1); background: #111; }
+        .controls { padding: 10px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+        button { padding: 10px; background: #222; color: #00ff00; border: 1px solid #00ff00; border-radius: 5px; cursor: pointer; }
+        #status { font-size: 0.9em; height: 20px; margin-top: 5px; }
+        .listening { color: red; font-weight: bold; animation: blink 1s infinite; }
+        @keyframes blink { 50% { opacity: 0; } }
     </style>
 </head>
 <body>
-    <video id="remoteVideo" autoplay playsinline></video>
+    <video id="videoDisplay" autoplay playsinline></video>
+    <div id="status">Waiting for input...</div>
+    
     <div class="controls">
-        <div id="status">Status: Initializing...</div>
-        <button onclick="setupPhone()">1. SETUP PHONE (Camera)</button>
-        <button onclick="connectFromHeadset()">2. CONNECT HEADSET (Mirror)</button>
+        <button onclick="startAsPhone()">1. PHONE (Camera)</button>
+        <button onclick="connectAsHeadset()">2. HEADSET (Mirror)</button>
+        <button onclick="startVoiceRecognition()">3. START VOICE LISTENING</button>
     </div>
 
     <script>
-        // --- CUSTOM CONFIGURATION ---
-        const EASY_ID = "my-rearview-mirror"; // You can change this to any simple name!
-        
-        const peer = new Peer(EASY_ID); 
-        let localStream;
+        let peer;
+        let remoteStream;
+        let mediaRecorder;
+        let chunks = [];
+        const videoElement = document.getElementById('videoDisplay');
 
-        peer.on('open', (id) => {
-            document.getElementById('status').innerText = "Ready! My ID: " + id;
-        });
-
-        peer.on('error', (err) => {
-            if (err.type === 'unavailable-id') {
-                // If ID is taken, it just means you are already logged in on one device.
-                document.getElementById('status').innerText = "ID Connected!";
-            }
-        });
-
-        // --- PHONE LOGIC ---
-        async function setupPhone() {
-            localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-            document.getElementById('remoteVideo').srcObject = localStream;
-            document.getElementById('status').innerText = "PHone active. Waiting for headset...";
+        // --- PEER LOGIC ---
+        async function startAsPhone() {
+            peer = new Peer('mirror-phone-wumbo');
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+            videoElement.srcObject = stream;
+            peer.on('call', (call) => call.answer(stream));
+            document.getElementById('status').innerText = "Phone Broadcasting...";
         }
 
-        peer.on('call', (call) => {
-            call.answer(localStream);
-            call.on('stream', (stream) => {
-                document.getElementById('remoteVideo').srcObject = stream;
+        function connectAsHeadset() {
+            peer = new Peer('mirror-headset-wumbo');
+            peer.on('open', () => {
+                const call = peer.call('mirror-phone-wumbo', null);
+                call.on('stream', (stream) => {
+                    remoteStream = stream;
+                    videoElement.srcObject = stream;
+                    setupRecorder(stream);
+                    document.getElementById('status').innerText = "Connected & Buffering...";
+                });
             });
-        });
+        }
 
-        // --- HEADSET LOGIC ---
-        function connectFromHeadset() {
-            const call = peer.call(EASY_ID, null); 
-            call.on('stream', (stream) => {
-                document.getElementById('remoteVideo').srcObject = stream;
-                document.getElementById('status').innerText = "Connected to Phone!";
-            });
+        // --- RECORDING LOGIC ---
+        function setupRecorder(stream) {
+            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(chunks, { type: "video/webm" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `clip-${Date.now()}.webm`;
+                a.click();
+                chunks = [];
+                // Restart recording for next clip
+                mediaRecorder.start();
+                setTimeout(() => { if(mediaRecorder.state === "recording") mediaRecorder.stop(); }, 15000);
+            };
+            
+            // Continuous 15-second cycles
+            mediaRecorder.start();
+            setInterval(() => {
+                if (mediaRecorder.state === "recording") {
+                    mediaRecorder.stop(); 
+                }
+            }, 15000); 
+        }
+
+        function saveCurrentClip() {
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                document.getElementById('status').innerText = "CLIPPING THAT...";
+                mediaRecorder.stop(); // This triggers the download
+            }
+        }
+
+        // --- VOICE LOGIC ---
+        function startVoiceRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) return alert("Voice not supported in this browser.");
+
+            const recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.lang = 'en-US';
+
+            recognition.onstart = () => {
+                document.getElementById('status').innerHTML = '<span class="listening">LISTENING FOR "CLIP THAT"</span>';
+            };
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase();
+                if (transcript.includes("clip that")) {
+                    saveCurrentClip();
+                }
+            };
+
+            recognition.onerror = () => recognition.start(); // Auto-restart on silence
+            recognition.onend = () => recognition.start();   // Keep it always on
+            recognition.start();
         }
     </script>
 </body>
