@@ -1,163 +1,99 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wumbo Mirror v8.1 - XR Optimized</title>
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-    <style>
-        body { margin: 0; background: #000; color: #00ff00; font-family: 'Courier New', monospace; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        .controls { padding: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: #111; z-index: 100; border-bottom: 2px solid #00ff00; }
-        button { padding: 18px; background: #000; color: #00ff00; border: 2px solid #00ff00; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; text-transform: uppercase; transition: 0.2s; }
-        button:active { background: #00ff00; color: #000; }
-        #status-bar { display: flex; justify-content: space-between; align-items: center; padding: 10px; background: #000; font-size: 0.9em; border-bottom: 1px solid #333; }
-        #videoContainer { position: relative; flex: 1; background: #111; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); background: #000; }
-        #force-play { position: absolute; padding: 30px; background: #00ff00; color: #000; font-weight: bold; display: none; z-index: 200; border: none; border-radius: 15px; cursor: pointer; box-shadow: 0 0 30px #00ff00; font-size: 1.2rem; }
-        .indicator { width: 10px; height: 10px; border-radius: 50%; background: #333; display: inline-block; margin-right: 5px; }
-        .online { background: #00ff00; box-shadow: 0 0 8px #00ff00; }
-        #flash { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; z-index: 1000; opacity: 0; pointer-events: none; }
-    </style>
-</head>
-<body>
-    <div id="flash"></div>
-    <div class="controls">
-        <button onclick="startPhone()">1. PHONE MODE</button>
-        <button onclick="startHeadset()">2. HEADSET MODE</button>
-        <button onclick="toggleVoice()" style="grid-column: span 2;">3. START VOICE LISTENING</button>
-        <button onclick="location.reload()" style="grid-column: span 2; color: #ff4444; border-color: #ff4444;">⚠️ HARD RESET</button>
-    </div>
+<script>
+    // TIP: If you have multiple people using this, add a unique suffix to this ID
+    const PHONE_ID = 'wumbo-mirror-phone-2026'; 
+    const peerConfig = { 
+        debug: 2,
+        config: { 'iceServers': [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+        ] } 
+    };
 
-    <div id="status-bar">
-        <div><span id="led" class="indicator"></span> <span id="status">Ready...</span></div>
-        <span id="clock">00:00:00</span>
-    </div>
+    let peer, localStream;
+    const video = document.getElementById('videoDisplay');
+    const statusEl = document.getElementById('status');
+    const forceBtn = document.getElementById('force-play');
 
-    <div id="videoContainer">
-        <button id="force-play" onclick="playVideo()">STREAM DETECTED! CLICK TO SYNC</button>
-        <video id="videoDisplay" autoplay playsinline muted></video>
-    </div>
+    // 1. PHONE MODE: The Broadcaster
+    async function startPhone() {
+        updateStatus("Requesting Camera...");
+        try {
+            // Simplified constraints for better mobile compatibility
+            localStream = await navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    facingMode: "environment", 
+                    width: { ideal: 1280 }, 
+                    height: { ideal: 720 } 
+                }, 
+                audio: false 
+            });
+            
+            video.srcObject = localStream;
+            video.play();
 
-    <script>
-        const PHONE_ID = 'wumbo-mirror-phone-2026'; 
-        const peerConfig = { 
-            debug: 2,
-            config: { 'iceServers': [{ urls: 'stun:stun.l.google.com:19302' }] } 
-        };
+            // Destroy existing peer if it exists to prevent ID collisions
+            if (peer) peer.destroy();
+            
+            peer = new Peer(PHONE_ID, peerConfig);
+            
+            peer.on('open', (id) => updateStatus(`LIVE: ${id}`, true));
+            
+            peer.on('call', (call) => {
+                updateStatus("HEADSET LINKED!", true);
+                call.answer(localStream); // Send phone video to headset
+            });
 
-        let peer, localStream;
-        const statusEl = document.getElementById('status');
-        const ledEl = document.getElementById('led');
-        const video = document.getElementById('videoDisplay');
-        const forceBtn = document.getElementById('force-play');
-
-        setInterval(() => { 
-            document.getElementById('clock').innerText = new Date().toLocaleTimeString(); 
-        }, 1000);
-
-        function updateStatus(msg, isOnline = false) {
-            statusEl.innerText = msg;
-            if(isOnline) ledEl.classList.add('online');
-            else ledEl.classList.remove('online');
+            peer.on('error', (err) => {
+                console.error(err);
+                if(err.type === 'unavailable-id') {
+                    updateStatus("ID Busy. Resetting...");
+                    setTimeout(() => location.reload(), 1500);
+                }
+            });
+        } catch (e) { 
+            updateStatus("Camera Denied/Error"); 
+            console.error(e);
         }
+    }
 
-        async function startPhone() {
-            updateStatus("Accessing Camera...");
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }, 
-                    audio: false 
-                });
-                video.srcObject = localStream;
-                
-                peer = new Peer(PHONE_ID, peerConfig);
-                
-                peer.on('open', () => updateStatus("PHONE LIVE - WAITING...", true));
-                peer.on('call', call => {
-                    updateStatus("HEADSET CONNECTED!", true);
-                    call.answer(localStream);
-                });
-                
-                peer.on('error', err => {
-                    updateStatus("Peer Error: " + err.type);
-                    if(err.type === 'unavailable-id') setTimeout(() => location.reload(), 2000);
-                });
-            } catch (e) { 
-                updateStatus("Camera Error!"); 
-            }
-        }
+    // 2. HEADSET MODE: The Receiver
+    function startHeadset() {
+        updateStatus("Connecting...");
+        if (peer) peer.destroy();
+        
+        peer = new Peer(peerConfig); 
 
-        function startHeadset() {
-            updateStatus("Connecting...");
-            peer = new Peer(peerConfig); 
-
-            peer.on('open', (id) => {
-                updateStatus("Searching for Phone...");
-                const call = peer.call(PHONE_ID, new MediaStream()); // Dummy stream to initiate
+        peer.on('open', (id) => {
+            updateStatus("Dialing Phone...");
+            // We must send a stream or a placeholder to trigger the 'call' event
+            const call = peer.call(PHONE_ID, new MediaStream());
+            
+            call.on('stream', (remoteStream) => {
+                updateStatus("SIGNAL RECEIVED!", true);
+                video.srcObject = remoteStream;
                 
-                call.on('stream', stream => {
-                    updateStatus("STREAM RECEIVED!", true);
-                    video.srcObject = stream;
-                    
-                    // Attempt auto-play
-                    video.play().catch(() => {
+                // Handling Autoplay restrictions
+                const playPromise = video.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch(() => {
                         forceBtn.style.display = 'block';
                     });
-                });
-            });
-
-            peer.on('error', () => {
-                updateStatus("Retrying Link...");
-                setTimeout(startHeadset, 3000);
-            });
-        }
-
-        function playVideo() {
-            video.play();
-            forceBtn.style.display = 'none';
-        }
-
-        function takeSnapshot() {
-            const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            const ctx = canvas.getContext('2d');
-            
-            // Apply mirror flip to saved image to match view
-            ctx.translate(canvas.width, 0);
-            ctx.scale(-1, 1);
-            ctx.drawImage(video, 0, 0);
-            
-            const link = document.createElement('a');
-            link.download = `wumbo-clip-${Date.now()}.png`;
-            link.href = canvas.toDataURL();
-            link.click();
-            
-            // Flash Effect
-            const f = document.getElementById('flash');
-            f.style.opacity = '1';
-            setTimeout(() => f.style.opacity = '0', 150);
-        }
-
-        function toggleVoice() {
-            const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!Speech) {
-                updateStatus("Speech API Missing!");
-                return;
-            }
-            const rec = new Speech();
-            rec.continuous = true;
-            rec.onstart = () => updateStatus("LISTENING FOR 'CLIP'...");
-            rec.onresult = (e) => {
-                const last = e.results[e.results.length - 1][0].transcript.toLowerCase();
-                if(last.includes("clip") || last.includes("snap")) {
-                   updateStatus("SNAP!");
-                   takeSnapshot();
                 }
-            };
-            rec.onerror = () => rec.start(); // Restart on silence
-            rec.start();
-        }
-    </script>
-</body>
-</html>
+            });
+        });
+
+        peer.on('error', (err) => {
+            updateStatus("Peer Error. Retrying...");
+            console.log(err.type);
+            setTimeout(startHeadset, 3000);
+        });
+    }
+
+    // ... Keep your playVideo, takeSnapshot, and toggleVoice functions ...
+    
+    function updateStatus(msg, isOnline = false) {
+        statusEl.innerText = msg;
+        const led = document.getElementById('led');
+        isOnline ? led.classList.add('online') : led.classList.remove('online');
+    }
+</script>
