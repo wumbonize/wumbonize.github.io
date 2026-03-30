@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>XR Rearview Mirror</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { margin: 0; background: black; color: white; font-family: sans-serif; overflow: hidden; }
+        video { width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); /* Flip for mirror effect */ }
+        #controls { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <p id="status">Status: Initializing...</p>
+        <input type="text" id="peerIdInput" placeholder="Enter Phone ID (on Headset)">
+        <button onclick="startCall()">Connect to Phone</button>
+        <button onclick="startCamera()">Start Camera (on Phone)</button>
+    </div>
+    <video id="remoteVideo" autoplay playsinline></video>
+
+    <script>
+        const peer = new Peer(); 
+        let localStream;
+
+        peer.on('open', (id) => {
+            document.getElementById('status').innerText = "My ID: " + id;
+            console.log('My peer ID is: ' + id);
+        });
+
+        // --- PHONE SIDE ---
+        async function startCamera() {
+            localStream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment" }, // Uses the back camera
+                audio: false 
+            });
+            document.getElementById('status').innerText = "Camera Active. Waiting for connection...";
+        }
+
+        peer.on('call', (call) => {
+            call.answer(localStream); // Answer with the phone's camera stream
+            document.getElementById('status').innerText = "Streaming to Headset!";
+        });
+
+        // --- HEADSET SIDE ---
+        function startCall() {
+            const targetId = document.getElementById('peerIdInput').value;
+            const call = peer.call(targetId, null); // Call without sending local video
+            call.on('stream', (remoteStream) => {
+                document.getElementById('remoteVideo').srcObject = remoteStream;
+                document.getElementById('status').innerText = "Connected!";
+            });
+        }
+    </script>
+</body>
+</html>
