@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wumbo Mirror v8</title>
+    <title>Wumbo Mirror v8.1 - XR Optimized</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; color: #00ff00; font-family: 'Courier New', monospace; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -11,14 +11,16 @@
         button { padding: 18px; background: #000; color: #00ff00; border: 2px solid #00ff00; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; text-transform: uppercase; transition: 0.2s; }
         button:active { background: #00ff00; color: #000; }
         #status-bar { display: flex; justify-content: space-between; align-items: center; padding: 10px; background: #000; font-size: 0.9em; border-bottom: 1px solid #333; }
-        #videoContainer { position: relative; flex: 1; background: #111; display: flex; align-items: center; justify-content: center; }
-        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-        #force-play { position: absolute; padding: 20px; background: #00ff00; color: #000; font-weight: bold; display: none; z-index: 200; border: none; border-radius: 10px; cursor: pointer; box-shadow: 0 0 20px #00ff00; }
+        #videoContainer { position: relative; flex: 1; background: #111; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); background: #000; }
+        #force-play { position: absolute; padding: 30px; background: #00ff00; color: #000; font-weight: bold; display: none; z-index: 200; border: none; border-radius: 15px; cursor: pointer; box-shadow: 0 0 30px #00ff00; font-size: 1.2rem; }
         .indicator { width: 10px; height: 10px; border-radius: 50%; background: #333; display: inline-block; margin-right: 5px; }
         .online { background: #00ff00; box-shadow: 0 0 8px #00ff00; }
+        #flash { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; z-index: 1000; opacity: 0; pointer-events: none; }
     </style>
 </head>
 <body>
+    <div id="flash"></div>
     <div class="controls">
         <button onclick="startPhone()">1. PHONE MODE</button>
         <button onclick="startHeadset()">2. HEADSET MODE</button>
@@ -32,12 +34,11 @@
     </div>
 
     <div id="videoContainer">
-        <button id="force-play" onclick="this.style.display='none'; document.getElementById('videoDisplay').play();">VIDEO RECEIVED! CLICK TO SHOW</button>
+        <button id="force-play" onclick="playVideo()">STREAM DETECTED! CLICK TO SYNC</button>
         <video id="videoDisplay" autoplay playsinline muted></video>
     </div>
 
     <script>
-        // Use a static ID for the Phone so the Headset always knows where to call
         const PHONE_ID = 'wumbo-mirror-phone-2026'; 
         const peerConfig = { 
             debug: 2,
@@ -48,83 +49,113 @@
         const statusEl = document.getElementById('status');
         const ledEl = document.getElementById('led');
         const video = document.getElementById('videoDisplay');
+        const forceBtn = document.getElementById('force-play');
 
-        // Simple Clock
         setInterval(() => { 
             document.getElementById('clock').innerText = new Date().toLocaleTimeString(); 
         }, 1000);
 
+        function updateStatus(msg, isOnline = false) {
+            statusEl.innerText = msg;
+            if(isOnline) ledEl.classList.add('online');
+            else ledEl.classList.remove('online');
+        }
+
         async function startPhone() {
-            statusEl.innerText = "Accessing Camera...";
+            updateStatus("Accessing Camera...");
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment" }, 
+                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }, 
                     audio: false 
                 });
                 video.srcObject = localStream;
                 
                 peer = new Peer(PHONE_ID, peerConfig);
                 
-                peer.on('open', () => {
-                    statusEl.innerText = "PHONE LIVE - WAITING...";
-                    ledEl.classList.add('online');
-                });
-
+                peer.on('open', () => updateStatus("PHONE LIVE - WAITING...", true));
                 peer.on('call', call => {
-                    statusEl.innerText = "HEADSET CONNECTED!";
+                    updateStatus("HEADSET CONNECTED!", true);
                     call.answer(localStream);
                 });
-
+                
                 peer.on('error', err => {
-                    if(err.type === 'unavailable-id') statusEl.innerText = "ID Taken! Reloading...";
-                    console.error(err);
+                    updateStatus("Peer Error: " + err.type);
+                    if(err.type === 'unavailable-id') setTimeout(() => location.reload(), 2000);
                 });
             } catch (e) { 
-                statusEl.innerText = "Camera Error!"; 
-                console.error(e);
+                updateStatus("Camera Error!"); 
             }
         }
 
         function startHeadset() {
-            statusEl.innerText = "Connecting...";
+            updateStatus("Connecting...");
             peer = new Peer(peerConfig); 
 
-            peer.on('open', () => {
-                statusEl.innerText = "Calling Phone...";
-                const call = peer.call(PHONE_ID, new MediaStream()); 
+            peer.on('open', (id) => {
+                updateStatus("Searching for Phone...");
+                const call = peer.call(PHONE_ID, new MediaStream()); // Dummy stream to initiate
                 
                 call.on('stream', stream => {
-                    statusEl.innerText = "STREAM ATTACHED!";
-                    ledEl.classList.add('online');
+                    updateStatus("STREAM RECEIVED!", true);
                     video.srcObject = stream;
+                    
+                    // Attempt auto-play
                     video.play().catch(() => {
-                        document.getElementById('force-play').style.display = 'block';
+                        forceBtn.style.display = 'block';
                     });
                 });
             });
 
-            peer.on('error', err => {
-                statusEl.innerText = "Link failed. Retrying...";
-                setTimeout(startHeadset, 5000);
+            peer.on('error', () => {
+                updateStatus("Retrying Link...");
+                setTimeout(startHeadset, 3000);
             });
+        }
+
+        function playVideo() {
+            video.play();
+            forceBtn.style.display = 'none';
+        }
+
+        function takeSnapshot() {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            
+            // Apply mirror flip to saved image to match view
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, 0, 0);
+            
+            const link = document.createElement('a');
+            link.download = `wumbo-clip-${Date.now()}.png`;
+            link.href = canvas.toDataURL();
+            link.click();
+            
+            // Flash Effect
+            const f = document.getElementById('flash');
+            f.style.opacity = '1';
+            setTimeout(() => f.style.opacity = '0', 150);
         }
 
         function toggleVoice() {
             const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!Speech) {
-                statusEl.innerText = "Voice not supported!";
+                updateStatus("Speech API Missing!");
                 return;
             }
             const rec = new Speech();
             rec.continuous = true;
-            rec.onstart = () => statusEl.innerText = "LISTENING FOR 'CLIP'...";
+            rec.onstart = () => updateStatus("LISTENING FOR 'CLIP'...");
             rec.onresult = (e) => {
                 const last = e.results[e.results.length - 1][0].transcript.toLowerCase();
-                if(last.includes("clip")) {
-                   statusEl.innerText = "CLIPPED!";
-                   // Add flash or save logic here
+                if(last.includes("clip") || last.includes("snap")) {
+                   updateStatus("SNAP!");
+                   takeSnapshot();
                 }
             };
+            rec.onerror = () => rec.start(); // Restart on silence
             rec.start();
         }
     </script>
