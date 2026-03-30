@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wumbo Mirror v6</title>
+    <title>Wumbo Mirror v7</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; color: #00ff00; font-family: 'Courier New', monospace; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -13,7 +13,6 @@
         #status-bar { display: flex; justify-content: space-between; padding: 8px 15px; background: #000; font-size: 0.9em; border-bottom: 1px solid #333; align-items: center; }
         #videoContainer { position: relative; flex: 1; background: #111; display: flex; align-items: center; justify-content: center; }
         video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); background: #000; }
-        #rec-icon { display: none; width: 12px; height: 12px; background: red; border-radius: 50%; margin-right: 8px; animation: blink 1s infinite; }
         #flashOverlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: white; opacity: 0; pointer-events: none; z-index: 60; transition: opacity 0.1s; }
         @keyframes blink { 50% { opacity: 0; } }
     </style>
@@ -27,7 +26,7 @@
     </div>
 
     <div id="status-bar">
-        <div style="display:flex; align-items:center;"><div id="rec-icon"></div><span id="status">Ready...</span></div>
+        <span id="status">Ready...</span>
         <span id="clock">00:00:00</span>
     </div>
 
@@ -37,13 +36,10 @@
     </div>
 
     <script>
-        // THIS CONFIG IS THE FIX: It helps the video find a path through your router
         const peerConfig = {
             config: {
-                'iceServers': [
-                    { url: 'stun:stun.l.google.com:19302' },
-                    { url: 'stun:stun1.l.google.com:19302' }
-                ]
+                'iceServers': [{ url: 'stun:stun.l.google.com:19302' }],
+                'sdpSemantics': 'unified-plan'
             }
         };
 
@@ -51,25 +47,27 @@
         let localStream;
         const statusEl = document.getElementById('status');
         const video = document.getElementById('videoDisplay');
-        const recIcon = document.getElementById('rec-icon');
 
         setInterval(() => { document.getElementById('clock').innerText = new Date().toLocaleTimeString(); }, 1000);
 
         async function startPhone() {
-            statusEl.innerText = "Cam active...";
+            statusEl.innerText = "Starting Camera...";
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment", frameRate: { ideal: 30 } }, 
+                    audio: false 
+                });
                 video.srcObject = localStream;
-                recIcon.style.display = 'block';
                 
                 if (peer) peer.destroy();
-                peer = new Peer('wumbo-xr-99', peerConfig); 
+                peer = new Peer('wumbo-xr-session-final', peerConfig); 
                 
+                peer.on('open', () => statusEl.innerText = "PHONE READY");
                 peer.on('call', call => {
-                    statusEl.innerText = "SENDING VIDEO...";
+                    statusEl.innerText = "SENDING FEED...";
                     call.answer(localStream);
                 });
-            } catch (e) { statusEl.innerText = "Cam Error!"; }
+            } catch (e) { statusEl.innerText = "Camera Access Denied"; }
         }
 
         function startHeadset() {
@@ -78,12 +76,21 @@
             peer = new Peer(peerConfig); 
             
             peer.on('open', () => {
-                const call = peer.call('wumbo-xr-99', new MediaStream());
-                call.on('stream', s => {
-                    statusEl.innerText = "MIRROR LIVE";
-                    recIcon.style.display = 'block';
-                    video.srcObject = s;
-                    video.play();
+                const call = peer.call('wumbo-xr-session-final', new MediaStream());
+                
+                call.on('stream', remoteStream => {
+                    statusEl.innerText = "STREAM ATTACHED";
+                    // Attempting to force the video to render
+                    if ("srcObject" in video) {
+                        video.srcObject = remoteStream;
+                    } else {
+                        video.src = window.URL.createObjectURL(remoteStream);
+                    }
+                    
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        statusEl.innerText = "MIRROR LIVE";
+                    };
                 });
             });
         }
@@ -99,7 +106,7 @@
                 }
             };
             rec.start();
-            statusEl.innerText = "VOICE ACTIVE";
+            statusEl.innerText = "VOICE: ON";
         }
     </script>
 </body>
