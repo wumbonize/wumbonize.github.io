@@ -3,140 +3,123 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wumbo Mirror 2026</title>
+    <title>Wumbo Mirror - GitHub Edition</title>
     
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     
     <style>
-        body { font-family: sans-serif; background: #111; color: white; text-align: center; margin: 0; padding: 20px; }
-        #videoDisplay { width: 100%; max-width: 800px; background: #000; border-radius: 8px; margin-top: 10px; }
-        .controls { margin-top: 20px; display: flex; gap: 10px; justify-content: center; }
-        button { padding: 12px 20px; cursor: pointer; border-radius: 5px; border: none; font-weight: bold; }
-        
-        /* Status LED styles */
-        #status-container { margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 10px; }
-        #led { width: 12px; height: 12px; background: red; border-radius: 50%; box-shadow: 0 0 5px red; }
-        #led.online { background: #00ff00; box-shadow: 0 0 10px #00ff00; }
-        
-        #force-play { display: none; background: #ff9800; color: black; width: 100%; margin-top: 10px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f0f0f; color: #eee; text-align: center; padding: 20px; }
+        .card { background: #1e1e1e; padding: 20px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); max-width: 600px; margin: auto; }
+        video { width: 100%; border-radius: 10px; background: #000; margin: 15px 0; transform: scaleX(-1); } /* Mirror effect */
+        .status-bar { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 20px; font-weight: bold; }
+        #led { width: 10px; height: 10px; background: #555; border-radius: 50%; }
+        .online { background: #00ff88 !important; box-shadow: 0 0 8px #00ff88; }
+        .btn-group { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+        button { padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; }
+        .btn-phone { background: #3d5afe; color: white; }
+        .btn-headset { background: #00c853; color: white; }
+        button:hover { opacity: 0.8; transform: translateY(-1px); }
+        #force-play { background: #ffab00; color: #000; display: none; width: 100%; margin-bottom: 10px; }
     </style>
 </head>
 <body>
 
-    <h2>Wumbo Mirror</h2>
+<div class="card">
+    <h2>Wumbo Mirror 2026</h2>
     
-    <div id="status-container">
+    <div class="status-bar">
         <div id="led"></div>
-        <span id="status">Disconnected</span>
+        <span id="status">Ready to Connect</span>
     </div>
 
+    <button id="force-play" onclick="playVideo()">RESUME VIDEO</button>
     <video id="videoDisplay" autoplay playsinline muted></video>
-    
-    <button id="force-play" onclick="playVideo()">Click to Resume Video</button>
 
-    <div class="controls">
-        <button style="background: #2196F3; color: white;" onclick="startPhone()">Act as PHONE (Camera)</button>
-        <button style="background: #4CAF50; color: white;" onclick="startHeadset()">Act as HEADSET (Viewer)</button>
+    <div class="btn-group">
+        <button class="btn-phone" onclick="startPhone()">Broadcaster (Phone)</button>
+        <button class="btn-headset" onclick="startHeadset()">Receiver (Headset)</button>
     </div>
+</div>
 
-    <script>
-        // Unique ID for the broadcaster
-        const PHONE_ID = 'wumbo-mirror-phone-2026'; 
+<script>
+    const PHONE_ID = 'wumbo-mirror-phone-2026'; 
+    const peerConfig = { 
+        debug: 2,
+        config: { 'iceServers': [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+        ] } 
+    };
+
+    let peer, localStream;
+    const video = document.getElementById('videoDisplay');
+    const statusEl = document.getElementById('status');
+    const forceBtn = document.getElementById('force-play');
+    const led = document.getElementById('led');
+
+    function updateStatus(msg, isOnline = false) {
+        statusEl.innerText = msg;
+        isOnline ? led.classList.add('online') : led.classList.remove('online');
+    }
+
+    async function startPhone() {
+        if (typeof Peer === 'undefined') return alert("PeerJS library hasn't loaded yet!");
         
-        const peerConfig = { 
-            debug: 2,
-            config: { 'iceServers': [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
-            ] } 
-        };
-
-        let peer, localStream;
-        
-        // Grab elements after DOM loads
-        const video = document.getElementById('videoDisplay');
-        const statusEl = document.getElementById('status');
-        const forceBtn = document.getElementById('force-play');
-        const led = document.getElementById('led');
-
-        // 1. PHONE MODE: The Broadcaster
-        async function startPhone() {
-            updateStatus("Requesting Camera...");
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
-                        facingMode: "environment", 
-                        width: { ideal: 1280 }, 
-                        height: { ideal: 720 } 
-                    }, 
-                    audio: false 
-                });
-                
-                video.srcObject = localStream;
-                video.play();
-
-                if (peer) peer.destroy();
-                
-                // Set fixed ID for the phone
-                peer = new Peer(PHONE_ID, peerConfig);
-                
-                peer.on('open', (id) => updateStatus(`LIVE: ${id}`, true));
-                
-                peer.on('call', (call) => {
-                    updateStatus("HEADSET LINKED!", true);
-                    call.answer(localStream); 
-                });
-
-                peer.on('error', (err) => {
-                    console.error(err);
-                    if(err.type === 'unavailable-id') {
-                        updateStatus("ID Busy. Resetting...");
-                        setTimeout(() => location.reload(), 1500);
-                    }
-                });
-            } catch (e) { 
-                updateStatus("Camera Denied/Error"); 
-                console.error(e);
-            }
-        }
-
-        // 2. HEADSET MODE: The Receiver
-        function startHeadset() {
-            updateStatus("Connecting...");
-            if (peer) peer.destroy();
+        updateStatus("Accessing Camera...");
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment" }, 
+                audio: false 
+            });
+            video.srcObject = localStream;
             
-            peer = new Peer(peerConfig); 
-
-            peer.on('open', (id) => {
-                updateStatus("Dialing Phone...");
-                // Send an empty stream to initiate the handshake
-                const call = peer.call(PHONE_ID, new MediaStream());
-                
-                call.on('stream', (remoteStream) => {
-                    updateStatus("SIGNAL RECEIVED!", true);
-                    video.srcObject = remoteStream;
-                    
-                    video.play().catch(() => {
-                        forceBtn.style.display = 'block';
-                    });
-                });
+            if (peer) peer.destroy();
+            peer = new Peer(PHONE_ID, peerConfig);
+            
+            peer.on('open', (id) => updateStatus("LIVE: Broadcast Mode", true));
+            peer.on('call', (call) => {
+                updateStatus("HEADSET CONNECTED", true);
+                call.answer(localStream);
             });
-
+            
             peer.on('error', (err) => {
-                updateStatus("Peer Error. Retrying...");
-                setTimeout(startHeadset, 3000);
+                if(err.type === 'unavailable-id') {
+                    updateStatus("ID Taken. Resetting...");
+                    setTimeout(() => location.reload(), 2000);
+                }
             });
+        } catch (e) {
+            updateStatus("Camera Error: " + e.message);
         }
+    }
 
-        function playVideo() {
-            video.play();
-            forceBtn.style.display = 'none';
-        }
+    function startHeadset() {
+        if (typeof Peer === 'undefined') return alert("PeerJS library hasn't loaded yet!");
+        
+        updateStatus("Searching for Phone...");
+        if (peer) peer.destroy();
+        peer = new Peer(peerConfig);
 
-        function updateStatus(msg, isOnline = false) {
-            statusEl.innerText = msg;
-            isOnline ? led.classList.add('online') : led.classList.remove('online');
-        }
-    </script>
+        peer.on('open', () => {
+            const call = peer.call(PHONE_ID, new MediaStream());
+            call.on('stream', (remoteStream) => {
+                updateStatus("CONNECTED", true);
+                video.srcObject = remoteStream;
+                video.play().catch(() => forceBtn.style.display = 'block');
+            });
+        });
+
+        peer.on('error', () => {
+            updateStatus("Connection Lost. Retrying...");
+            setTimeout(startHeadset, 3000);
+        });
+    }
+
+    function playVideo() {
+        video.play();
+        forceBtn.style.display = 'none';
+    }
+</script>
+
 </body>
 </html>
