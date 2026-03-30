@@ -7,106 +7,138 @@
         body { margin: 0; background: #000; color: #00ff00; font-family: 'Courier New', monospace; text-align: center; overflow: hidden; }
         video { width: 100vw; height: 70vh; object-fit: cover; transform: scaleX(-1); background: #111; }
         .controls { padding: 10px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
-        button { padding: 10px; background: #222; color: #00ff00; border: 1px solid #00ff00; border-radius: 5px; cursor: pointer; }
-        #status { font-size: 0.9em; height: 20px; margin-top: 5px; }
-        .listening { color: red; font-weight: bold; animation: blink 1s infinite; }
+        button { padding: 10px; background: #222; color: #00ff00; border: 1px solid #00ff00; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        button:active { background: #00ff00; color: #000; }
+        #status { font-size: 0.9em; height: 20px; margin-top: 5px; text-transform: uppercase; }
+        .listening { color: #ff0000; animation: blink 1s infinite; }
         @keyframes blink { 50% { opacity: 0; } }
     </style>
 </head>
 <body>
-    <video id="videoDisplay" autoplay playsinline></video>
-    <div id="status">Waiting for input...</div>
+    <video id="videoDisplay" autoplay playsinline muted></video>
+    <div id="status">System Ready...</div>
     
     <div class="controls">
-        <button onclick="startAsPhone()">1. PHONE (Camera)</button>
-        <button onclick="connectAsHeadset()">2. HEADSET (Mirror)</button>
+        <button onclick="startAsPhone()">1. SETUP PHONE (Camera)</button>
+        <button onclick="connectAsHeadset()">2. CONNECT HEADSET (Mirror)</button>
         <button onclick="startVoiceRecognition()">3. START VOICE LISTENING</button>
     </div>
 
     <script>
         let peer;
-        let remoteStream;
         let mediaRecorder;
         let chunks = [];
         const videoElement = document.getElementById('videoDisplay');
+        const statusEl = document.getElementById('status');
 
         // --- PEER LOGIC ---
-        async function startAsPhone() {
-            peer = new Peer('mirror-phone-wumbo');
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-            videoElement.srcObject = stream;
-            peer.on('call', (call) => call.answer(stream));
-            document.getElementById('status').innerText = "Phone Broadcasting...";
+        function startAsPhone() {
+            // Hardcoded ID for the phone acts as the "Server"
+            peer = new Peer('wumbo-mirror-server'); 
+            
+            navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment", width: { ideal: 1280 } }, 
+                audio: false 
+            }).then(stream => {
+                videoElement.srcObject = stream;
+                statusEl.innerText = "Phone Broadcasting. Waiting for Headset...";
+                
+                peer.on('call', (call) => {
+                    statusEl.innerText = "Headset Connected!";
+                    call.answer(stream); // Send phone video to headset
+                });
+            }).catch(err => {
+                statusEl.innerText = "Camera Error: " + err.message;
+            });
         }
 
         function connectAsHeadset() {
-            peer = new Peer('mirror-headset-wumbo');
-            peer.on('open', () => {
-                const call = peer.call('mirror-phone-wumbo', null);
-                call.on('stream', (stream) => {
-                    remoteStream = stream;
-                    videoElement.srcObject = stream;
-                    setupRecorder(stream);
-                    document.getElementById('status').innerText = "Connected & Buffering...";
+            // Headset gets a random ID to avoid "ID already taken" errors
+            peer = new Peer(); 
+            
+            peer.on('open', (id) => {
+                statusEl.innerText = "Searching for Phone...";
+                // Call the hardcoded phone ID
+                const call = peer.call('wumbo-mirror-server', new MediaStream()); 
+                
+                call.on('stream', (remoteStream) => {
+                    videoElement.srcObject = remoteStream;
+                    setupRecorder(remoteStream);
+                    statusEl.innerText = "Mirror Active & Buffering...";
                 });
+            });
+
+            peer.on('error', (err) => {
+                statusEl.innerText = "Connection Failed. Is Phone active?";
+                console.error(err);
             });
         }
 
         // --- RECORDING LOGIC ---
         function setupRecorder(stream) {
-            mediaRecorder = new MediaRecorder(stream);
-            mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
-            mediaRecorder.onstop = () => {
-                const blob = new Blob(chunks, { type: "video/webm" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `clip-${Date.now()}.webm`;
-                a.click();
-                chunks = [];
-                // Restart recording for next clip
-                mediaRecorder.start();
-                setTimeout(() => { if(mediaRecorder.state === "recording") mediaRecorder.stop(); }, 15000);
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) chunks.push(e.data);
             };
             
-            // Continuous 15-second cycles
-            mediaRecorder.start();
-            setInterval(() => {
-                if (mediaRecorder.state === "recording") {
-                    mediaRecorder.stop(); 
+            mediaRecorder.onstop = () => {
+                if (chunks.length > 0) {
+                    const blob = new Blob(chunks, { type: "video/webm" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `clip-${Date.now()}.webm`;
+                    a.click();
+                    chunks = [];
                 }
-            }, 15000); 
+                mediaRecorder.start(); // Restart instantly
+            };
+            
+            mediaRecorder.start();
+            // Automatically cycles every 30 seconds to keep buffer fresh
+            setInterval(() => {
+                if (mediaRecorder.state === "recording") mediaRecorder.stop();
+            }, 30000); 
         }
 
         function saveCurrentClip() {
             if (mediaRecorder && mediaRecorder.state === "recording") {
-                document.getElementById('status').innerText = "CLIPPING THAT...";
-                mediaRecorder.stop(); // This triggers the download
+                statusEl.innerHTML = '<span style="color:white">CLIPPING THAT!</span>';
+                mediaRecorder.stop(); 
             }
         }
 
-        // --- VOICE LOGIC ---
+        // --- VOICE LOGIC (Sshhh... No beeping) ---
         function startVoiceRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SpeechRecognition) return alert("Voice not supported in this browser.");
+            if (!SpeechRecognition) return alert("Browser doesn't support Voice.");
 
             const recognition = new SpeechRecognition();
+            
+            // KEY FIX: continuous = true keeps the mic open 
+            // without restarting/beeping after every sentence.
             recognition.continuous = true;
+            recognition.interimResults = false; 
             recognition.lang = 'en-US';
 
             recognition.onstart = () => {
-                document.getElementById('status').innerHTML = '<span class="listening">LISTENING FOR "CLIP THAT"</span>';
+                statusEl.innerHTML = '<span class="listening">LISTENING FOR "CLIP THAT"</span>';
             };
 
             recognition.onresult = (event) => {
                 const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase();
-                if (transcript.includes("clip that")) {
+                console.log("Heard:", transcript);
+                if (transcript.includes("clip") || transcript.includes("that")) {
                     saveCurrentClip();
                 }
             };
 
-            recognition.onerror = () => recognition.start(); // Auto-restart on silence
-            recognition.onend = () => recognition.start();   // Keep it always on
+            // Only restart if it actually crashes or stops unexpectedly
+            recognition.onend = () => {
+                console.log("Voice disconnected. Reconnecting...");
+                recognition.start();
+            };
+
             recognition.start();
         }
     </script>
