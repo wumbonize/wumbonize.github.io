@@ -2,26 +2,20 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wumbo XR Mirror</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Wumbo Mirror v3</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; color: #00ff00; font-family: 'Courier New', monospace; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        
-        /* Buttons at the TOP so they don't get cut off */
         .controls { padding: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: #111; z-index: 100; border-bottom: 2px solid #00ff00; }
-        button { padding: 15px; background: #000; color: #00ff00; border: 2px solid #00ff00; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; text-transform: uppercase; }
+        button { padding: 18px; background: #000; color: #00ff00; border: 2px solid #00ff00; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; text-transform: uppercase; }
         button:active { background: #00ff00; color: #000; }
         .reset-btn { grid-column: span 2; border-color: #ff0000; color: #ff0000; padding: 10px; }
-
         #status-bar { display: flex; justify-content: space-between; padding: 8px 15px; background: #000; font-size: 0.9em; border-bottom: 1px solid #333; }
-        
-        #videoContainer { position: relative; flex: 1; background: #111; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-        
-        #flashOverlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: white; opacity: 0; pointer-events: none; z-index: 10; }
-        #warningSign { position: absolute; top: 10%; font-size: 100px; display: none; z-index: 11; animation: blink 0.5s infinite; }
-        
+        #videoContainer { position: relative; flex: 1; background: #111; display: flex; align-items: center; justify-content: center; }
+        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); background: #000; }
+        #flashOverlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: white; opacity: 0; pointer-events: none; z-index: 10; transition: opacity 0.1s; }
+        #warningSign { position: absolute; top: 15%; font-size: 120px; display: none; z-index: 11; animation: blink 0.5s infinite; }
         @keyframes blink { 50% { opacity: 0; } }
     </style>
 </head>
@@ -30,11 +24,11 @@
         <button onclick="startPhone()">1. PHONE MODE</button>
         <button onclick="startHeadset()">2. HEADSET MODE</button>
         <button onclick="toggleVoice()">3. VOICE: OFF</button>
-        <button class="reset-btn" onclick="location.reload()">⚠️ RESET PAGE</button>
+        <button class="reset-btn" onclick="location.reload()">⚠️ HARD RESET PAGE</button>
     </div>
 
     <div id="status-bar">
-        <span id="status">Ready...</span>
+        <span id="status">Ready. Phone First!</span>
         <span id="clock">00:00:00</span>
     </div>
 
@@ -46,50 +40,79 @@
 
     <script>
         let peer;
+        let streamReceived = false;
         const statusEl = document.getElementById('status');
         const video = document.getElementById('videoDisplay');
 
-        // Clock Function
-        setInterval(() => {
-            const now = new Date();
-            document.getElementById('clock').innerText = now.toLocaleTimeString();
-        }, 1000);
+        // Clock Update
+        setInterval(() => { document.getElementById('clock').innerText = new Date().toLocaleTimeString(); }, 1000);
 
         async function startPhone() {
-            statusEl.innerText = "Cam active...";
+            statusEl.innerText = "Opening Camera...";
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment", width: { ideal: 1280 } }, 
+                    audio: false 
+                });
                 video.srcObject = stream;
-                peer = new Peer('wumbo-shared-room'); 
-                peer.on('open', () => statusEl.innerText = "PHONE ONLINE");
-                peer.on('call', call => call.answer(stream));
-            } catch (e) { statusEl.innerText = "Cam Error!"; }
+                
+                // Use a very specific ID to avoid global conflicts
+                peer = new Peer('wumbo-xr-mirror-session-99'); 
+                
+                peer.on('open', () => statusEl.innerText = "PHONE BROADCASTING...");
+                peer.on('call', call => {
+                    statusEl.innerText = "HEADSET REQUESTED FEED...";
+                    call.answer(stream);
+                });
+                
+                peer.on('error', err => {
+                    if(err.type === 'unavailable-id') statusEl.innerText = "ID Busy. Try Hard Reset.";
+                });
+            } catch (e) {
+                statusEl.innerText = "CAM ERROR: Check HTTPS/Permissions";
+                console.error(e);
+            }
         }
 
         function startHeadset() {
-            statusEl.innerText = "Connecting...";
-            peer = new Peer(); 
+            statusEl.innerText = "Dialing Phone...";
+            if(peer) peer.destroy();
+            peer = new Peer(); // Random ID for headset
+            
             peer.on('open', () => {
-                const call = peer.call('wumbo-shared-room', new MediaStream());
+                // Call the Phone's specific ID
+                const call = peer.call('wumbo-xr-mirror-session-99', new MediaStream());
+                
                 call.on('stream', s => {
+                    statusEl.innerText = "VIDEO RECEIVED!";
                     video.srcObject = s;
-                    statusEl.innerText = "CONNECTED";
+                    streamReceived = true;
                 });
             });
+
+            // If it fails to connect in 4 seconds, it will auto-retry once
+            setTimeout(() => {
+                if (!streamReceived) {
+                    statusEl.innerText = "Retrying Connection...";
+                    startHeadset();
+                }
+            }, 4000);
         }
 
         function toggleVoice() {
             const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if(!Speech) return alert("Speech not supported");
             const rec = new Speech();
             rec.continuous = true;
-            rec.onstart = () => statusEl.innerText = "LISTENING...";
+            rec.onstart = () => statusEl.innerText = "HEARING FOR 'CLIP'...";
             rec.onresult = (e) => {
                 const text = e.results[e.results.length-1][0].transcript.toLowerCase();
                 if(text.includes("clip")) {
                    document.getElementById('flashOverlay').style.opacity = "1";
-                   setTimeout(() => document.getElementById('flashOverlay').style.opacity = "0", 200);
+                   setTimeout(() => document.getElementById('flashOverlay').style.opacity = "0", 150);
                 }
             };
+            rec.onend = () => rec.start();
             rec.start();
         }
     </script>
