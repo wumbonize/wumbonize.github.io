@@ -1,99 +1,142 @@
-<script>
-    // TIP: If you have multiple people using this, add a unique suffix to this ID
-    const PHONE_ID = 'wumbo-mirror-phone-2026'; 
-    const peerConfig = { 
-        debug: 2,
-        config: { 'iceServers': [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-        ] } 
-    };
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wumbo Mirror 2026</title>
+    
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    
+    <style>
+        body { font-family: sans-serif; background: #111; color: white; text-align: center; margin: 0; padding: 20px; }
+        #videoDisplay { width: 100%; max-width: 800px; background: #000; border-radius: 8px; margin-top: 10px; }
+        .controls { margin-top: 20px; display: flex; gap: 10px; justify-content: center; }
+        button { padding: 12px 20px; cursor: pointer; border-radius: 5px; border: none; font-weight: bold; }
+        
+        /* Status LED styles */
+        #status-container { margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+        #led { width: 12px; height: 12px; background: red; border-radius: 50%; box-shadow: 0 0 5px red; }
+        #led.online { background: #00ff00; box-shadow: 0 0 10px #00ff00; }
+        
+        #force-play { display: none; background: #ff9800; color: black; width: 100%; margin-top: 10px; }
+    </style>
+</head>
+<body>
 
-    let peer, localStream;
-    const video = document.getElementById('videoDisplay');
-    const statusEl = document.getElementById('status');
-    const forceBtn = document.getElementById('force-play');
+    <h2>Wumbo Mirror</h2>
+    
+    <div id="status-container">
+        <div id="led"></div>
+        <span id="status">Disconnected</span>
+    </div>
 
-    // 1. PHONE MODE: The Broadcaster
-    async function startPhone() {
-        updateStatus("Requesting Camera...");
-        try {
-            // Simplified constraints for better mobile compatibility
-            localStream = await navigator.mediaDevices.getUserMedia({ 
-                video: { 
-                    facingMode: "environment", 
-                    width: { ideal: 1280 }, 
-                    height: { ideal: 720 } 
-                }, 
-                audio: false 
-            });
-            
-            video.srcObject = localStream;
-            video.play();
+    <video id="videoDisplay" autoplay playsinline muted></video>
+    
+    <button id="force-play" onclick="playVideo()">Click to Resume Video</button>
 
-            // Destroy existing peer if it exists to prevent ID collisions
+    <div class="controls">
+        <button style="background: #2196F3; color: white;" onclick="startPhone()">Act as PHONE (Camera)</button>
+        <button style="background: #4CAF50; color: white;" onclick="startHeadset()">Act as HEADSET (Viewer)</button>
+    </div>
+
+    <script>
+        // Unique ID for the broadcaster
+        const PHONE_ID = 'wumbo-mirror-phone-2026'; 
+        
+        const peerConfig = { 
+            debug: 2,
+            config: { 'iceServers': [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ] } 
+        };
+
+        let peer, localStream;
+        
+        // Grab elements after DOM loads
+        const video = document.getElementById('videoDisplay');
+        const statusEl = document.getElementById('status');
+        const forceBtn = document.getElementById('force-play');
+        const led = document.getElementById('led');
+
+        // 1. PHONE MODE: The Broadcaster
+        async function startPhone() {
+            updateStatus("Requesting Camera...");
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        facingMode: "environment", 
+                        width: { ideal: 1280 }, 
+                        height: { ideal: 720 } 
+                    }, 
+                    audio: false 
+                });
+                
+                video.srcObject = localStream;
+                video.play();
+
+                if (peer) peer.destroy();
+                
+                // Set fixed ID for the phone
+                peer = new Peer(PHONE_ID, peerConfig);
+                
+                peer.on('open', (id) => updateStatus(`LIVE: ${id}`, true));
+                
+                peer.on('call', (call) => {
+                    updateStatus("HEADSET LINKED!", true);
+                    call.answer(localStream); 
+                });
+
+                peer.on('error', (err) => {
+                    console.error(err);
+                    if(err.type === 'unavailable-id') {
+                        updateStatus("ID Busy. Resetting...");
+                        setTimeout(() => location.reload(), 1500);
+                    }
+                });
+            } catch (e) { 
+                updateStatus("Camera Denied/Error"); 
+                console.error(e);
+            }
+        }
+
+        // 2. HEADSET MODE: The Receiver
+        function startHeadset() {
+            updateStatus("Connecting...");
             if (peer) peer.destroy();
             
-            peer = new Peer(PHONE_ID, peerConfig);
-            
-            peer.on('open', (id) => updateStatus(`LIVE: ${id}`, true));
-            
-            peer.on('call', (call) => {
-                updateStatus("HEADSET LINKED!", true);
-                call.answer(localStream); // Send phone video to headset
+            peer = new Peer(peerConfig); 
+
+            peer.on('open', (id) => {
+                updateStatus("Dialing Phone...");
+                // Send an empty stream to initiate the handshake
+                const call = peer.call(PHONE_ID, new MediaStream());
+                
+                call.on('stream', (remoteStream) => {
+                    updateStatus("SIGNAL RECEIVED!", true);
+                    video.srcObject = remoteStream;
+                    
+                    video.play().catch(() => {
+                        forceBtn.style.display = 'block';
+                    });
+                });
             });
 
             peer.on('error', (err) => {
-                console.error(err);
-                if(err.type === 'unavailable-id') {
-                    updateStatus("ID Busy. Resetting...");
-                    setTimeout(() => location.reload(), 1500);
-                }
+                updateStatus("Peer Error. Retrying...");
+                setTimeout(startHeadset, 3000);
             });
-        } catch (e) { 
-            updateStatus("Camera Denied/Error"); 
-            console.error(e);
         }
-    }
 
-    // 2. HEADSET MODE: The Receiver
-    function startHeadset() {
-        updateStatus("Connecting...");
-        if (peer) peer.destroy();
-        
-        peer = new Peer(peerConfig); 
+        function playVideo() {
+            video.play();
+            forceBtn.style.display = 'none';
+        }
 
-        peer.on('open', (id) => {
-            updateStatus("Dialing Phone...");
-            // We must send a stream or a placeholder to trigger the 'call' event
-            const call = peer.call(PHONE_ID, new MediaStream());
-            
-            call.on('stream', (remoteStream) => {
-                updateStatus("SIGNAL RECEIVED!", true);
-                video.srcObject = remoteStream;
-                
-                // Handling Autoplay restrictions
-                const playPromise = video.play();
-                if (playPromise !== undefined) {
-                    playPromise.catch(() => {
-                        forceBtn.style.display = 'block';
-                    });
-                }
-            });
-        });
-
-        peer.on('error', (err) => {
-            updateStatus("Peer Error. Retrying...");
-            console.log(err.type);
-            setTimeout(startHeadset, 3000);
-        });
-    }
-
-    // ... Keep your playVideo, takeSnapshot, and toggleVoice functions ...
-    
-    function updateStatus(msg, isOnline = false) {
-        statusEl.innerText = msg;
-        const led = document.getElementById('led');
-        isOnline ? led.classList.add('online') : led.classList.remove('online');
-    }
-</script>
+        function updateStatus(msg, isOnline = false) {
+            statusEl.innerText = msg;
+            isOnline ? led.classList.add('online') : led.classList.remove('online');
+        }
+    </script>
+</body>
+</html>
