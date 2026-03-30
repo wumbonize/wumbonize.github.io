@@ -4,50 +4,59 @@
     <title>XR Rearview Mirror</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; background: black; color: white; font-family: sans-serif; overflow: hidden; }
-        video { width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); /* Flip for mirror effect */ }
-        #controls { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px; }
+        body { margin: 0; background: black; color: #00ff00; font-family: monospace; text-align: center; }
+        video { width: 100vw; height: 60vh; object-fit: cover; transform: scaleX(-1); border-bottom: 2px solid #00ff00; }
+        .controls { padding: 20px; }
+        button { padding: 15px; margin: 5px; background: #333; color: #00ff00; border: 1px solid #00ff00; border-radius: 5px; cursor: pointer; }
+        #status { font-size: 1.2em; margin-bottom: 10px; }
     </style>
 </head>
 <body>
-    <div id="controls">
-        <p id="status">Status: Initializing...</p>
-        <input type="text" id="peerIdInput" placeholder="Enter Phone ID (on Headset)">
-        <button onclick="startCall()">Connect to Phone</button>
-        <button onclick="startCamera()">Start Camera (on Phone)</button>
-    </div>
     <video id="remoteVideo" autoplay playsinline></video>
+    <div class="controls">
+        <div id="status">Status: Initializing...</div>
+        <button onclick="setupPhone()">1. SETUP PHONE (Camera)</button>
+        <button onclick="connectFromHeadset()">2. CONNECT HEADSET (Mirror)</button>
+    </div>
 
     <script>
-        const peer = new Peer(); 
+        // --- CUSTOM CONFIGURATION ---
+        const EASY_ID = "my-rearview-mirror"; // You can change this to any simple name!
+        
+        const peer = new Peer(EASY_ID); 
         let localStream;
 
         peer.on('open', (id) => {
-            document.getElementById('status').innerText = "My ID: " + id;
-            console.log('My peer ID is: ' + id);
+            document.getElementById('status').innerText = "Ready! My ID: " + id;
         });
 
-        // --- PHONE SIDE ---
-        async function startCamera() {
-            localStream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment" }, // Uses the back camera
-                audio: false 
-            });
-            document.getElementById('status').innerText = "Camera Active. Waiting for connection...";
+        peer.on('error', (err) => {
+            if (err.type === 'unavailable-id') {
+                // If ID is taken, it just means you are already logged in on one device.
+                document.getElementById('status').innerText = "ID Connected!";
+            }
+        });
+
+        // --- PHONE LOGIC ---
+        async function setupPhone() {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+            document.getElementById('remoteVideo').srcObject = localStream;
+            document.getElementById('status').innerText = "PHone active. Waiting for headset...";
         }
 
         peer.on('call', (call) => {
-            call.answer(localStream); // Answer with the phone's camera stream
-            document.getElementById('status').innerText = "Streaming to Headset!";
+            call.answer(localStream);
+            call.on('stream', (stream) => {
+                document.getElementById('remoteVideo').srcObject = stream;
+            });
         });
 
-        // --- HEADSET SIDE ---
-        function startCall() {
-            const targetId = document.getElementById('peerIdInput').value;
-            const call = peer.call(targetId, null); // Call without sending local video
-            call.on('stream', (remoteStream) => {
-                document.getElementById('remoteVideo').srcObject = remoteStream;
-                document.getElementById('status').innerText = "Connected!";
+        // --- HEADSET LOGIC ---
+        function connectFromHeadset() {
+            const call = peer.call(EASY_ID, null); 
+            call.on('stream', (stream) => {
+                document.getElementById('remoteVideo').srcObject = stream;
+                document.getElementById('status').innerText = "Connected to Phone!";
             });
         }
     </script>
