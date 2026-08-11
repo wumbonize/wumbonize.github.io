@@ -64,6 +64,10 @@
     async function startPhone() {
         if (typeof Peer === 'undefined') return alert("PeerJS library hasn't loaded yet!");
         
+        // 1. Phone now asks for the PIN first
+        const targetCode = prompt("Enter the 5-digit code shown on your HEADSET:");
+        if (!targetCode) return; 
+
         updateStatus("Accessing Camera...");
         try {
             localStream = await navigator.mediaDevices.getUserMedia({ 
@@ -72,27 +76,21 @@
             });
             
             video.srcObject = localStream;
-            
-            // FIX: Force the phone to play the local video so the browser doesn't suspend the camera hardware
             video.play().catch(() => forceBtn.style.display = 'block');
             
             if (peer) peer.destroy();
+            peer = new Peer(peerConfig);
             
-            // Generate a random 5-digit PIN
-            const myCode = Math.floor(10000 + Math.random() * 90000).toString();
-            peer = new Peer(myCode, peerConfig);
-            
-            peer.on('open', (id) => updateStatus(`LIVE: Code is ${id}`, true));
-            peer.on('call', (call) => {
-                updateStatus("HEADSET CONNECTED", true);
-                call.answer(localStream);
+            peer.on('open', () => {
+                updateStatus(`Dialing Headset...`);
+                // 2. Phone initiates the call WITH the video track included
+                const call = peer.call(targetCode, localStream);
+                
+                updateStatus("LIVE: Broadcasting", true);
             });
             
             peer.on('error', (err) => {
-                if(err.type === 'unavailable-id') {
-                    updateStatus("ID Taken. Resetting...");
-                    setTimeout(() => location.reload(), 2000);
-                }
+                updateStatus("Connection Error: " + err.type);
             });
         } catch (e) {
             updateStatus("Camera Error: " + e.message);
@@ -102,19 +100,20 @@
     function startHeadset() {
         if (typeof Peer === 'undefined') return alert("PeerJS library hasn't loaded yet!");
         
-        // Ask the user to type in the PIN
-        const targetCode = prompt("Enter the 5-digit code shown on your phone:");
-        if (!targetCode) return; // Stop if they hit cancel
-        
-        updateStatus(`Searching for Phone (${targetCode})...`);
         if (peer) peer.destroy();
-        peer = new Peer(peerConfig);
-
-        peer.on('open', () => {
-            // FIX: Removed 'new MediaStream()' to prevent WebRTC negotiation crashes
-            const call = peer.call(targetCode);
+        
+        // 3. Headset now generates the PIN
+        const myCode = Math.floor(10000 + Math.random() * 90000).toString();
+        peer = new Peer(myCode, peerConfig);
+        
+        peer.on('open', (id) => updateStatus(`WAITING: Enter Code ${id} on Phone`, true));
+        
+        // 4. Headset waits to receive the call
+        peer.on('call', (call) => {
+            updateStatus("PHONE CONNECTED", true);
+            call.answer(); // Headset safely answers without a stream
+            
             call.on('stream', (remoteStream) => {
-                updateStatus("CONNECTED", true);
                 video.srcObject = remoteStream;
                 video.play().catch(() => forceBtn.style.display = 'block');
             });
