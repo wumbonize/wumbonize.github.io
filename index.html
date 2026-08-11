@@ -70,7 +70,11 @@
                 video: { facingMode: "environment" }, 
                 audio: false 
             });
+            
             video.srcObject = localStream;
+            
+            // FIX: Force the phone to play the local video so the browser doesn't suspend the camera hardware
+            video.play().catch(() => forceBtn.style.display = 'block');
             
             if (peer) peer.destroy();
             
@@ -107,7 +111,8 @@
         peer = new Peer(peerConfig);
 
         peer.on('open', () => {
-            const call = peer.call(targetCode, new MediaStream());
+            // FIX: Removed 'new MediaStream()' to prevent WebRTC negotiation crashes
+            const call = peer.call(targetCode);
             call.on('stream', (remoteStream) => {
                 updateStatus("CONNECTED", true);
                 video.srcObject = remoteStream;
