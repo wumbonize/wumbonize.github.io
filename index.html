@@ -42,7 +42,6 @@
 </div>
 
 <script>
-    const PHONE_ID = 'wumbo-mirror-phone-2026'; 
     const peerConfig = { 
         debug: 2,
         config: { 'iceServers': [
@@ -74,9 +73,12 @@
             video.srcObject = localStream;
             
             if (peer) peer.destroy();
-            peer = new Peer(PHONE_ID, peerConfig);
             
-            peer.on('open', (id) => updateStatus("LIVE: Broadcast Mode", true));
+            // Generate a random 5-digit PIN
+            const myCode = Math.floor(10000 + Math.random() * 90000).toString();
+            peer = new Peer(myCode, peerConfig);
+            
+            peer.on('open', (id) => updateStatus(`LIVE: Code is ${id}`, true));
             peer.on('call', (call) => {
                 updateStatus("HEADSET CONNECTED", true);
                 call.answer(localStream);
@@ -96,12 +98,16 @@
     function startHeadset() {
         if (typeof Peer === 'undefined') return alert("PeerJS library hasn't loaded yet!");
         
-        updateStatus("Searching for Phone...");
+        // Ask the user to type in the PIN
+        const targetCode = prompt("Enter the 5-digit code shown on your phone:");
+        if (!targetCode) return; // Stop if they hit cancel
+        
+        updateStatus(`Searching for Phone (${targetCode})...`);
         if (peer) peer.destroy();
         peer = new Peer(peerConfig);
 
         peer.on('open', () => {
-            const call = peer.call(PHONE_ID, new MediaStream());
+            const call = peer.call(targetCode, new MediaStream());
             call.on('stream', (remoteStream) => {
                 updateStatus("CONNECTED", true);
                 video.srcObject = remoteStream;
